@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central Park Shadow Study</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<aside id="sidebar">
+  <header>
+    <h1><span class="sun">☀</span> Central Park Shadow Study</h1>
+    <p>Screening-level incremental-shadow analysis for a proposed building, following the NYC CEQR shadow methodology.</p>
+  </header>
+
+  <!-- ---- Proposed building ---- -->
+  <div class="section">
+    <h2>Proposed building</h2>
+    <div class="row">
+      <label>BBL</label>
+      <input type="text" id="bblInput" class="grow" placeholder="e.g. 1010307501 (220 CPS)" inputmode="numeric" autocomplete="off">
+    </div>
+    <div class="btn-row">
+      <button id="bblBtn" class="primary">🔎 Locate site by BBL</button>
+    </div>
+    <div class="hint" id="bblStatus">Borough-Block-Lot (10 digits). Borough: Manhattan&nbsp;1, Bronx&nbsp;2, Brooklyn&nbsp;3, Queens&nbsp;4, Staten&nbsp;Island&nbsp;5. Loads the lot’s footprint from NYC Open Data (PLUTO + Building Footprints).</div>
+    <div class="row" style="margin-top:14px">
+      <label>Height (ft)</label>
+      <input type="number" id="heightFt" class="grow" min="0" step="10">
+    </div>
+    <div class="row">
+      <label>≈ Stories</label>
+      <input type="number" id="stories" class="grow" min="0" step="1" placeholder="~11 ft/story">
+    </div>
+    <div class="btn-row">
+      <button id="drawBtn">✏ Draw footprint</button>
+      <button id="rectBtn">📍 Pin + size</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label>Rect W×L (m)</label>
+      <input type="number" id="rectW" class="grow" value="40" title="East–west width (m)">
+      <input type="number" id="rectL" class="grow" value="50" title="North–south length (m)">
+    </div>
+    <div class="btn-row">
+      <button id="resetBtn">↺ Reset to default tower</button>
+    </div>
+    <p class="hint">Default is a ~1,100&nbsp;ft slab on Billionaires’ Row (W 57th St). Draw your own footprint, or drop a pin and give rectangular dimensions.</p>
+  </div>
+
+  <!-- ---- Time of analysis ---- -->
+  <div class="section">
+    <h2>Time of analysis</h2>
+    <div id="timeReadout">
+      <div id="clock">12:00 PM</div>
+      <div id="sunInfo"></div>
+    </div>
+    <input type="range" id="timeSlider" min="360" max="1080" value="720" step="5">
+    <div class="btn-row" style="margin-top:8px">
+      <button id="playBtn">▶ Play day</button>
+      <button id="sweepToggle" class="toggle active">Day sweep</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label>CEQR day</label>
+      <select id="daySelect" class="grow"></select>
+    </div>
+    <div class="row">
+      <label>Custom date</label>
+      <input type="date" id="customDate" class="grow">
+    </div>
+    <div class="btn-row">
+      <button id="ceqrToggle" class="toggle active">CEQR window: ON</button>
+    </div>
+    <div class="window-note" id="windowNote"></div>
+  </div>
+
+  <!-- ---- Results ---- -->
+  <div class="section">
+    <h2>Impacted resources</h2>
+    <div id="summary"></div>
+    <div id="noImpact" style="display:none">No sun-sensitive resources receive new shadow under the current configuration. Try a taller building, a footprint closer to the park, or the winter-solstice day.</div>
+    <div id="resourceList"></div>
+  </div>
+
+  <!-- ---- Legend ---- -->
+  <div class="section">
+    <h2>Legend</h2>
+    <div id="legend"></div>
+  </div>
+
+  <!-- ---- Methodology ---- -->
+  <div class="section">
+    <details>
+      <summary>Methodology &amp; assumptions</summary>
+      <div class="methodology">
+        <p>This tool follows the screening logic of the <b>NYC CEQR Technical Manual, Ch. 8 (Shadows)</b>:</p>
+        <ul>
+          <li><b>Representative days:</b> Mar 21, May 6/Aug 6, Jun 21, and Dec 21.</li>
+          <li><b>Analysis window:</b> 1.5 hours after sunrise to 1.5 hours before sunset.</li>
+          <li><b>Incremental shadow:</b> new shadow cast by the proposed structure on sun-sensitive resources, reported as duration.</li>
+        </ul>
+        <p><b>Geometry:</b> the building is treated as a flat-topped extrusion. The ground shadow is the convex hull of the footprint and its sun-projected top (shadow length = height ÷ tan(sun altitude)). Sun position from <a href="https://github.com/mourner/suncalc">SunCalc</a>.</p>
+        <p><b>Limits:</b> screening-level only. It models the proposed building in isolation — it does not subtract shadow already cast by existing buildings, nor model terrain or your structure’s own massing setbacks. Resource coordinates are approximate. For a defensible EIS, use 3-D massing in a CAD/GIS shadow model.</p>
+      </div>
+    </details>
+  </div>
+</aside>
+
+<div id="map"><div id="drawBanner"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
