@@ -68,12 +68,31 @@ let shadowLayer = null;                          // current-time shadow
 let buildingLayer = null;                        // footprint
 const resourceMarkers = {};                      // id -> marker
 
-/* draw resource markers */
+/* centroid of a polygon [[lat,lng],...] */
+function centroid(coords) {
+  const n = coords.length;
+  let la = 0, ln = 0;
+  for (const [a, b] of coords) { la += a; ln += b; }
+  return [la / n, ln / n];
+}
+
+/* draw resource markers — polygon when OSM geometry available, circle otherwise */
 RESOURCES.forEach(r => {
   const t = RESOURCE_TYPES[r.type] || { color: '#888' };
-  const m = L.circleMarker([r.lat, r.lng], {
-    radius: 6, color: '#0b0f12', weight: 1.5, fillColor: t.color, fillOpacity: 0.95
-  }).addTo(map);
+  const geom = GEOMETRIES[r.id];
+  let m;
+  if (geom) {
+    m = L.polygon(geom, {
+      color: t.color, weight: 1.5, fillColor: t.color, fillOpacity: 0.35, interactive: true
+    }).addTo(map);
+    const [la, ln] = centroid(geom);
+    r._lat = la; r._lng = ln;
+  } else {
+    m = L.circleMarker([r.lat, r.lng], {
+      radius: 6, color: '#0b0f12', weight: 1.5, fillColor: t.color, fillOpacity: 0.95
+    }).addTo(map);
+    r._lat = r.lat; r._lng = r.lng;
+  }
   m.bindPopup(resourcePopup(r));
   resourceMarkers[r.id] = m;
 });
@@ -212,7 +231,7 @@ function render() {
     if (state.showSweep) {
       L.polygon(sp, { stroke: false, fillColor: '#f4c430', fillOpacity: 0.045, interactive: false }).addTo(sweepLayer);
     }
-    RESOURCES.forEach(r => { if (pointInPolygon(r.lat, r.lng, sp)) counts[r.id] += STEP_MIN; });
+    RESOURCES.forEach(r => { if (pointInPolygon(r._lat, r._lng, sp)) counts[r.id] += STEP_MIN; });
   }
 
   renderResults(counts, steps);
@@ -281,7 +300,7 @@ function renderResults(counts, steps) {
       <div class="meta"><b>Operator:</b> ${r.operator}</div>
       <div class="users">${r.users.map(u => `<span class="pill">${u}</span>`).join('')}</div>`;
     el.addEventListener('click', () => {
-      map.setView([r.lat, r.lng], 16, { animate: true });
+      map.setView([r._lat, r._lng], 16, { animate: true });
       resourceMarkers[r.id].setPopupContent(resourcePopup(r, dur)).openPopup();
     });
     list.appendChild(el);
