@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Central Park Shadow Study</title>
+<title>Central Park Shadow Screening</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <link rel="stylesheet" href="styles.css">
@@ -12,47 +12,60 @@
 
 <aside id="sidebar">
   <header>
-    <h1><span class="sun">☀</span> Central Park Shadow Study</h1>
-    <p>Screening-level incremental-shadow analysis for a proposed building, following the NYC CEQR shadow methodology.</p>
+    <h1><span class="sun">☀</span> Central Park Shadow Screening</h1>
+    <p>Screening-level incremental-shadow analysis · Baseline vs. Proposed · NYC CEQR methodology</p>
   </header>
 
-  <!-- ---- Proposed building ---- -->
-  <div class="section">
-    <h2>Proposed building</h2>
-    <div class="row">
+  <!-- ---- Building scenarios ---- -->
+  <div class="section" id="sec-scenarios">
+    <h2>Building Scenarios</h2>
+    <div class="scen-toggle-row">
+      <button class="scen-btn active" id="editBaselineBtn" data-scen="baseline">Existing / As-of-Right</button>
+      <button class="scen-btn" id="editProposedBtn" data-scen="proposed">Proposed / Discretionary</button>
+    </div>
+    <p class="hint" id="editingLabel">Editing: <b>Proposed / Discretionary</b></p>
+
+    <div class="row" style="margin-top:10px">
       <label>BBL</label>
-      <input type="text" id="bblInput" class="grow" placeholder="e.g. 1010307501 (220 CPS)" inputmode="numeric" autocomplete="off">
+      <input type="text" id="bblInput" class="grow" placeholder="e.g. 1010307501" inputmode="numeric" autocomplete="off">
     </div>
     <div class="btn-row">
-      <button id="bblBtn" class="primary">🔎 Locate site by BBL</button>
+      <button id="bblBtn" class="primary">🔎 Locate by BBL</button>
     </div>
-    <div class="hint" id="bblStatus">Borough-Block-Lot (10 digits). Borough: Manhattan&nbsp;1, Bronx&nbsp;2, Brooklyn&nbsp;3, Queens&nbsp;4, Staten&nbsp;Island&nbsp;5. Loads the lot’s footprint from NYC Open Data (PLUTO + Building Footprints).</div>
-    <div class="row" style="margin-top:14px">
-      <label>Height (ft)</label>
-      <input type="number" id="heightFt" class="grow" min="0" step="10">
+    <div class="hint" id="bblStatus">10-digit BBL (borough 1–5, 5-digit block, 4-digit lot). Loads footprint from NYC Open Data.</div>
+
+    <div style="margin-top:14px">
+      <div class="row">
+        <label>Existing (ft)</label>
+        <input type="number" id="baselineHeightFt" class="grow" min="0" step="10" value="0">
+        <span class="stories-label">≈ <span id="baselineStories">0</span> fl</span>
+      </div>
+      <div class="row">
+        <label>Proposed (ft)</label>
+        <input type="number" id="proposedHeightFt" class="grow" min="0" step="10" value="1100">
+        <span class="stories-label">≈ <span id="proposedStories">100</span> fl</span>
+      </div>
     </div>
-    <div class="row">
-      <label>≈ Stories</label>
-      <input type="number" id="stories" class="grow" min="0" step="1" placeholder="~11 ft/story">
-    </div>
-    <div class="btn-row">
+
+    <div class="btn-row" style="margin-top:10px">
       <button id="drawBtn">✏ Draw footprint</button>
       <button id="rectBtn">📍 Pin + size</button>
     </div>
-    <div class="row" style="margin-top:10px">
+    <div class="row" style="margin-top:8px">
       <label>Rect W×L (m)</label>
-      <input type="number" id="rectW" class="grow" value="40" title="East–west width (m)">
-      <input type="number" id="rectL" class="grow" value="50" title="North–south length (m)">
+      <input type="number" id="rectW" class="grow" value="40">
+      <input type="number" id="rectL" class="grow" value="50">
     </div>
     <div class="btn-row">
       <button id="resetBtn">↺ Reset to default tower</button>
+      <button id="showBaselineToggle" class="toggle active">Show existing shadow</button>
     </div>
-    <p class="hint">Default is a ~1,100&nbsp;ft slab on Billionaires’ Row (W 57th St). Draw your own footprint, or drop a pin and give rectangular dimensions.</p>
+    <p class="hint">Default proposed: ~1,100 ft slab on Billionaires' Row. Existing defaults to no building (height = 0). Draw your own footprint or drop a pin for either scenario.</p>
   </div>
 
   <!-- ---- Time of analysis ---- -->
-  <div class="section">
-    <h2>Time of analysis</h2>
+  <div class="section" id="sec-time">
+    <h2>Time of Analysis</h2>
     <div id="timeReadout">
       <div id="clock">12:00 PM</div>
       <div id="sunInfo"></div>
@@ -76,18 +89,97 @@
     <div class="window-note" id="windowNote"></div>
   </div>
 
-  <!-- ---- Results ---- -->
-  <div class="section">
-    <h2>Impacted resources</h2>
-    <div id="summary"></div>
-    <div id="noImpact" style="display:none">No sun-sensitive resources receive new shadow under the current configuration. Try a taller building, a footprint closer to the park, or the winter-solstice day.</div>
-    <div id="resourceList"></div>
+  <!-- ---- Resource filter ---- -->
+  <div class="section" id="sec-filter">
+    <h2>Resource Filter</h2>
+    <div class="filter-row">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="interest">Priority</button>
+      <button class="filter-btn" data-filter="sun-sensitive">Sun-sensitive</button>
+      <button class="filter-btn" data-filter="human-use">Human-use</button>
+      <button class="filter-btn" data-filter="ecological">Ecological</button>
+      <button class="filter-btn" data-filter="mitigation">Mitigation</button>
+    </div>
+  </div>
+
+  <!-- ---- Results tabs ---- -->
+  <div class="section tab-section" id="sec-tabs">
+    <div class="tab-bar">
+      <button class="tab active" data-tab="results">Shadow Results</button>
+      <button class="tab" data-tab="context">Impact Context</button>
+      <button class="tab" data-tab="mitigation">Mitigation</button>
+    </div>
+
+    <!-- Shadow Results -->
+    <div id="tab-results" class="tab-panel">
+      <div id="summary"></div>
+      <div class="sort-row">
+        <span class="hint" style="white-space:nowrap">Sort by:</span>
+        <select id="sortBy" class="grow">
+          <option value="incrDur">Incremental duration</option>
+          <option value="maxPct">Max coverage %</option>
+          <option value="avgPct">Avg coverage %</option>
+          <option value="acreMin">Shadow-acre-minutes</option>
+        </select>
+      </div>
+      <div id="noImpact" style="display:none">No resources receive incremental shadow under the current configuration.</div>
+      <div id="resourceList"></div>
+    </div>
+
+    <!-- Impact Context -->
+    <div id="tab-context" class="tab-panel" style="display:none">
+      <p class="hint" style="margin-bottom:10px">Resource type, use intensity, impact theory, and screening-level concern rating. Concern level is editable.</p>
+      <div id="contextList"></div>
+    </div>
+
+    <!-- Mitigation Ideas -->
+    <div id="tab-mitigation" class="tab-panel" style="display:none">
+      <p class="hint" style="margin-bottom:10px">Suggested mitigation ideas for affected resources. For screening purposes only.</p>
+      <div id="mitigationList"></div>
+    </div>
+  </div>
+
+  <!-- ---- Seasonal summary ---- -->
+  <div class="section" id="sec-seasonal">
+    <h2>Seasonal Summary</h2>
+    <div class="btn-row">
+      <button id="runAllDaysBtn" class="primary">▶ Analyze all CEQR days</button>
+    </div>
+    <p class="hint" id="seasonalStatus">Run all CEQR days to see incremental shadow duration by season.</p>
+    <div id="seasonalTable" style="overflow-x:auto;margin-top:10px"></div>
+  </div>
+
+  <!-- ---- Heatmap ---- -->
+  <div class="section" id="sec-heatmap">
+    <h2>Resource × Time Heatmap</h2>
+    <p class="hint">Rows = resources · Columns = time steps for selected day.
+      <span class="hm-legend"><span class="hm-swatch hm-none"></span>None
+      <span class="hm-swatch hm-existing"></span>Existing
+      <span class="hm-swatch hm-proposed"></span>Proposed
+      <span class="hm-swatch hm-incr"></span>Incremental</span>
+    </p>
+    <div id="heatmap" style="overflow-x:auto;margin-top:8px"></div>
+  </div>
+
+  <!-- ---- Export ---- -->
+  <div class="section" id="sec-export">
+    <h2>Export</h2>
+    <div class="btn-row">
+      <button id="exportCsvBtn">⬇ CSV Results</button>
+      <button id="exportMemoBtn">📄 Plain-English Memo</button>
+    </div>
+    <p class="hint" id="assumptionsNote"></p>
   </div>
 
   <!-- ---- Legend ---- -->
-  <div class="section">
+  <div class="section" id="sec-legend">
     <h2>Legend</h2>
     <div id="legend"></div>
+    <div style="margin-top:10px">
+      <div class="legend-item"><span class="legend-swatch" style="background:#2a4a7f;opacity:.6"></span>Existing / as-of-right shadow</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#0b0f16;opacity:.7"></span>Proposed shadow</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:#f4c430;opacity:.55"></span>Incremental (proposed − existing) shadow</div>
+    </div>
   </div>
 
   <!-- ---- Methodology ---- -->
@@ -97,12 +189,13 @@
       <div class="methodology">
         <p>This tool follows the screening logic of the <b>NYC CEQR Technical Manual, Ch. 8 (Shadows)</b>:</p>
         <ul>
-          <li><b>Representative days:</b> Mar 21, May 6/Aug 6, Jun 21, and Dec 21.</li>
-          <li><b>Analysis window:</b> 1.5 hours after sunrise to 1.5 hours before sunset.</li>
-          <li><b>Incremental shadow:</b> new shadow cast by the proposed structure on sun-sensitive resources, reported as duration.</li>
+          <li><b>Representative days:</b> Mar 21, May 6/Aug 6, Jun 21, Dec 21.</li>
+          <li><b>Analysis window:</b> 1.5 hrs after sunrise to 1.5 hrs before sunset.</li>
+          <li><b>Incremental shadow:</b> proposed shadow minus existing/as-of-right shadow, computed at each time step.</li>
+          <li><b>Area metrics:</b> grid-sampled polygon coverage; approximate, screening-level only.</li>
         </ul>
-        <p><b>Geometry:</b> the building is treated as a flat-topped extrusion. The ground shadow is the convex hull of the footprint and its sun-projected top (shadow length = height ÷ tan(sun altitude)). Sun position from <a href="https://github.com/mourner/suncalc">SunCalc</a>.</p>
-        <p><b>Limits:</b> screening-level only. It models the proposed building in isolation — it does not subtract shadow already cast by existing buildings, nor model terrain or your structure’s own massing setbacks. Resource coordinates are approximate. For a defensible EIS, use 3-D massing in a CAD/GIS shadow model.</p>
+        <p><b>Geometry:</b> flat-topped extrusions; ground shadow = convex hull of footprint ∪ projected top. Sun position from <a href="https://github.com/mourner/suncalc">SunCalc</a>. Resource polygons from OpenStreetMap (OSM/ODbL).</p>
+        <p><b>Limits:</b> screening-level only. Does not model terrain, massing setbacks, or tree canopy. For a defensible EIS, use 3-D CAD/GIS shadow modeling. Concern levels are screening indicators, not CEQR significance determinations.</p>
       </div>
     </details>
   </div>
@@ -114,6 +207,7 @@
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
 <script src="data.js"></script>
+<script src="resources_meta.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
