@@ -168,7 +168,26 @@
       <button id="exportCsvBtn">⬇ CSV Results</button>
       <button id="exportMemoBtn">📄 Plain-English Memo</button>
     </div>
+    <div class="btn-row" style="margin-top:6px">
+      <button id="exportPromptBtn" class="primary">✦ Generate Slide Deck Prompt</button>
+    </div>
     <p class="hint" id="assumptionsNote"></p>
+  </div>
+
+  <!-- ---- Slide deck prompt modal ---- -->
+  <div id="promptModal" style="display:none">
+    <div id="promptBackdrop"></div>
+    <div id="promptDialog">
+      <div id="promptHeader">
+        <span id="promptTitle">Slide Deck Prompt</span>
+        <div style="display:flex;gap:8px">
+          <button id="promptCopyBtn" class="primary">Copy to clipboard</button>
+          <button id="promptCloseBtn">✕ Close</button>
+        </div>
+      </div>
+      <p class="hint" style="margin:8px 16px 4px">Paste this prompt into Claude (or any AI) to generate a slide deck. Run "Analyze all CEQR days" first for richer seasonal data.</p>
+      <textarea id="promptText" readonly></textarea>
+    </div>
   </div>
 
   <!-- ---- Legend ---- -->

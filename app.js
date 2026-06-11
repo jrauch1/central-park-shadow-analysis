@@ -859,6 +859,189 @@ For a defensible EIS, use 3-D CAD/GIS shadow modeling with certified consultant 
   downloadText(memo, `cp-shadow-memo-${state.currentDayId}.txt`, 'text/plain');
 }
 
+/* ============================================================ slide prompt ==*/
+
+function generateSlidePrompt() {
+  const out = analyzeDay(state.currentDayId);
+  const { results } = out;
+  const prop = state.scenarios.proposed;
+  const base = state.scenarios.baseline;
+  const dayLabel = CEQR_DAYS.find(d => d.id === state.currentDayId)?.label || state.currentDayId;
+
+  const sorted = RESOURCES
+    .map(r => ({ r, m: results[r.id] }))
+    .filter(x => x.m.incrMin > 0)
+    .sort((a, b) => b.m.incrMin - a.m.incrMin);
+
+  const highConcern = sorted.filter(({ r, m }) =>
+    computeConcern(r, m, getSeasonalDays(r.id)) === 'High');
+  const midConcern  = sorted.filter(({ r, m }) =>
+    computeConcern(r, m, getSeasonalDays(r.id)) === 'Medium');
+
+  const mitigationCandidates = sorted.filter(x => x.r.mitigationCandidate);
+
+  // seasonal table rows
+  let seasonalRows = '';
+  if (state.seasonalResults) {
+    const totals = {};
+    RESOURCES.forEach(r => {
+      totals[r.id] = CEQR_DAYS.reduce((s, d) => s + ((state.seasonalResults[d.id]?.[r.id]?.incrMin) || 0), 0);
+    });
+    const affectedSeasonal = RESOURCES.filter(r => totals[r.id] > 0)
+      .sort((a, b) => totals[b.id] - totals[a.id]).slice(0, 12);
+    seasonalRows = affectedSeasonal.map(r => {
+      const cells = CEQR_DAYS.map(d => fmtDur((state.seasonalResults[d.id]?.[r.id]?.incrMin) || 0));
+      return `  - ${r.name}: Dec 21=${cells[3]}, Mar 21=${cells[0]}, May 6=${cells[1]}, Jun 21=${cells[2]}, Total=${fmtDur(totals[r.id])}`;
+    }).join('\n');
+  }
+
+  const resourceDetails = sorted.slice(0, 12).map(({ r, m }) => {
+    const seaDays = getSeasonalDays(r.id);
+    const concern = computeConcern(r, m, seaDays);
+    return `  - ${r.name}
+      Incremental: ${fmtDur(m.incrMin)} | Existing: ${fmtDur(m.existingMin)} | Proposed: ${fmtDur(m.proposedMin)}
+      Max coverage: ${m.maxIncrPct.toFixed(0)}% | Avg coverage: ${m.avgIncrPct.toFixed(0)}% | Acre-minutes: ${m.acreMin.toFixed(1)}
+      Window: ${m.firstIncrT != null ? fmtClock(m.firstIncrT) + ' – ' + fmtClock(m.lastIncrT) : 'N/A'}
+      Impact theory: ${(r.impactTheory||[]).join(', ')}
+      Screening concern: ${concern} | Seasonal days affected: ${seaDays}
+      Mitigation candidate: ${r.mitigationCandidate ? 'Yes — ' + (r.mitigationMeasure || '') : 'No'}`;
+  }).join('\n\n');
+
+  const prompt = `You are a professional urban planner and data visualization expert. I need you to create a complete slide deck for a Central Park shadow impact screening study. Use the analysis data below to write out every slide — title, subtitle, body text, data, and detailed instructions for the visual on each slide.
+
+STUDY CONTEXT
+=============
+Project type: NYC CEQR Chapter 8 Shadows — screening-level incremental shadow analysis
+Baseline condition: ${base.heightFt > 0 ? base.heightFt + ' ft existing/as-of-right building' : 'No existing building (0 ft baseline)'}
+Proposed condition: ${prop.heightFt} ft proposed/discretionary building
+Primary analysis day shown: ${dayLabel}
+Time-step interval: ${STEP_MIN} minutes
+Analysis window: CEQR standard (sunrise +90 min to sunset −90 min)
+Resource polygons: OpenStreetMap (screening-level)
+Tree canopy: Excluded
+Disclaimer: Screening-level only — not a CEQR significance determination
+
+AFFECTED RESOURCES — ${dayLabel.toUpperCase()}
+${sorted.length > 0 ? resourceDetails : '  None affected on this day.'}
+
+${state.seasonalResults ? `SEASONAL SUMMARY (all 4 CEQR days)
+=====================================
+${seasonalRows || '  No seasonal data available.'}` : 'SEASONAL SUMMARY: Not yet computed (user has not run all CEQR days).'}
+
+HIGH-CONCERN RESOURCES: ${highConcern.length > 0 ? highConcern.map(x => x.r.name).join(', ') : 'None identified'}
+MEDIUM-CONCERN RESOURCES: ${midConcern.length > 0 ? midConcern.map(x => x.r.name).join(', ') : 'None identified'}
+MITIGATION CANDIDATES: ${mitigationCandidates.length > 0 ? mitigationCandidates.map(x => x.r.name).join(', ') : 'None identified'}
+
+SLIDE DECK INSTRUCTIONS
+========================
+Create a 10–14 slide deck in a dark, professional urban-planning aesthetic (dark navy/charcoal background, gold and white accents). The audience is a municipal review board or project team conducting environmental review.
+
+Build the following slides:
+
+SLIDE 1 — TITLE SLIDE
+Title: "Central Park Shadow Impact Screening"
+Subtitle: "Baseline vs. Proposed Incremental Shadow Analysis · NYC CEQR Chapter 8"
+Visual: A stylized aerial outline of Central Park with a building shadow sweeping across it. Show the park boundary in green and the shadow as a semi-transparent amber polygon.
+
+SLIDE 2 — STUDY METHODOLOGY
+Title: "Approach & Assumptions"
+Content: bullet points covering CEQR methodology, the 4 representative days, the analysis window, two-scenario approach (baseline vs. proposed), and the screening-level disclaimer.
+Visual: A simple diagram showing the sun's arc, building extrusion, and shadow vector with labeled components (height, sun altitude angle, shadow length).
+
+SLIDE 3 — BUILDING SCENARIOS
+Title: "Baseline vs. Proposed Conditions"
+Content: A two-column comparison table:
+  Left column — Existing/As-of-Right: ${base.heightFt} ft, footprint description
+  Right column — Proposed/Discretionary: ${prop.heightFt} ft, footprint description
+Visual: A side-by-side 3-D massing diagram showing the two buildings at scale next to a simplified Central Park outline.
+
+SLIDE 4 — SHADOW EXTENT MAP
+Title: "Incremental Shadow Extent — ${dayLabel}"
+Content: Caption explaining what incremental shadow means and which resources are affected.
+Visual: A map of Central Park showing:
+  - Park boundary in green
+  - Baseline shadow in blue-grey
+  - Proposed shadow in dark overlay
+  - Incremental shadow in amber/gold
+  - Affected resource polygons labeled and highlighted
+  - A north arrow, scale bar, and legend
+
+SLIDE 5 — RESOURCE IMPACT RANKING
+Title: "Incremental Shadow Duration by Resource — ${dayLabel}"
+Content: Brief framing sentence about the ranking.
+Visual: A horizontal bar chart ranking the top ${Math.min(sorted.length, 10)} affected resources by incremental shadow duration (minutes). Color bars by concern level: red for High, orange for Medium, green for Low. Label each bar with the duration and concern level badge.
+
+SLIDE 6 — COVERAGE METRICS
+Title: "Area Coverage & Scale of Impact"
+Content: Explanation that duration alone doesn't capture significance — coverage % and acre-minutes show how much of each resource is affected.
+Visual: A scatter plot with incremental duration (x-axis) vs. max coverage % (y-axis). Each point represents one resource, sized by shadow-acre-minutes, colored by concern level, and labeled by resource name.
+
+${state.seasonalResults ? `SLIDE 7 — SEASONAL SUMMARY
+Title: "Seasonal Pattern of Incremental Shadow"
+Content: Which resources are affected across multiple CEQR analysis days — recurrence signals greater significance.
+Visual: A heat table (matrix) where rows are the top affected resources and columns are the 4 CEQR days. Color cells by incremental duration: white/light = minimal, gold = moderate, amber = significant. Include a total column on the right.
+
+SLIDE 8 — RESOURCES OF CONCERN
+` : `SLIDE 7 — RESOURCES OF CONCERN
+`}Title: "Screening-Level Concern Assessment"
+Content: A table with columns: Resource | Impact Theory | Incremental Duration | Max Coverage | Concern Level. Highlight High and Medium rows.
+Visual: Styled table with concern-level badges. Add a footnote: "Concern levels are screening indicators, not CEQR significance determinations."
+
+${highConcern.length > 0 ? `SLIDE ${state.seasonalResults ? 9 : 8} — HIGH-CONCERN RESOURCE SPOTLIGHT
+Title: "${highConcern[0].r.name} — Detailed Impact"
+Content: Full metrics for ${highConcern[0].r.name}: duration, coverage, window, impact theory, and why this resource warrants further review.
+Visual: A zoomed map of ${highConcern[0].r.name} showing the incremental shadow polygon overlaid on the resource polygon at the time of maximum coverage. Include a small inset timeline bar showing when incremental shadow occurs across the day.
+
+SLIDE ${state.seasonalResults ? 10 : 9} — MITIGATION IDEAS
+` : `SLIDE ${state.seasonalResults ? 9 : 8} — MITIGATION IDEAS
+`}Title: "Potential Mitigation Measures"
+Content: For each mitigation candidate, list the resource name, possible critique, suggested measure, implementation partner, and feasibility.
+Visual: A styled card layout, one card per resource. Each card has a small icon for the mitigation category (shelter, lighting, landscaping, etc.), the resource name in bold, and the measure in plain text.
+
+SLIDE ${state.seasonalResults ? (highConcern.length > 0 ? 11 : 10) : (highConcern.length > 0 ? 10 : 9)} — CONCLUSIONS
+Title: "Screening-Level Findings"
+Content:
+  - Summary of total resources affected
+  - Which resources rise to High/Medium concern and why
+  - Which resources show seasonal recurrence
+  - Recommended next steps (further consultant review for High-concern resources; no further action for Low-concern resources)
+  - Disclaimer that this is screening-level only
+Visual: A simple summary scorecard with three columns: Resource | Concern Level | Recommended Action. Use color coding.
+
+SLIDE ${state.seasonalResults ? (highConcern.length > 0 ? 12 : 11) : (highConcern.length > 0 ? 11 : 10)} — APPENDIX / ASSUMPTIONS
+Title: "Assumptions & Data Sources"
+Content bullet points:
+  - Baseline: ${base.heightFt} ft
+  - Proposed: ${prop.heightFt} ft
+  - Analysis days: Mar 21, May 6/Aug 6, Jun 21, Dec 21
+  - Time-step interval: ${STEP_MIN} minutes
+  - Resource polygons: OpenStreetMap (OSM/ODbL)
+  - Shadow geometry: flat-topped extrusion, convex hull
+  - Tree canopy: excluded
+  - Analysis type: Screening-level; not consultant-certified
+  - Tool: Central Park Shadow Screening App (custom)
+Visual: Clean text slide, no chart needed.
+
+FORMATTING NOTES
+=================
+- Use a dark navy or charcoal background (#0f1418 or similar) throughout.
+- Accent colors: gold/amber (#f4c430) for proposed/incremental shadow, steel blue (#4a7abf) for baseline/existing, white for text, muted grey (#9fb0bd) for secondary text.
+- Concern level badge colors: red for High, orange for Medium, green for Low.
+- All charts should have labeled axes, a legend, and a data source note.
+- Maps should include a north arrow, scale bar, and legend.
+- Keep slide body text to 3–5 bullet points maximum. Put detail in speaker notes.
+- Add speaker notes to each slide with additional context for the presenter.
+- The tone should be objective, technical, and appropriate for a municipal environmental review audience.`;
+
+  return prompt;
+}
+
+function showPromptModal() {
+  const prompt = generateSlidePrompt();
+  document.getElementById('promptText').value = prompt;
+  document.getElementById('promptModal').style.display = 'flex';
+}
+
 function downloadText(content, filename, type) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([content], { type }));
@@ -1078,6 +1261,24 @@ function initUI() {
   /* Export */
   document.getElementById('exportCsvBtn').addEventListener('click', exportCsv);
   document.getElementById('exportMemoBtn').addEventListener('click', exportMemo);
+  document.getElementById('exportPromptBtn').addEventListener('click', showPromptModal);
+
+  /* Prompt modal */
+  document.getElementById('promptCloseBtn').addEventListener('click', () => {
+    document.getElementById('promptModal').style.display = 'none';
+  });
+  document.getElementById('promptBackdrop').addEventListener('click', () => {
+    document.getElementById('promptModal').style.display = 'none';
+  });
+  document.getElementById('promptCopyBtn').addEventListener('click', () => {
+    const txt = document.getElementById('promptText');
+    txt.select();
+    navigator.clipboard.writeText(txt.value).then(() => {
+      const btn = document.getElementById('promptCopyBtn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy to clipboard'; }, 2000);
+    });
+  });
 
   /* Legend */
   const legend = document.getElementById('legend');

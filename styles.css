@@ -254,6 +254,26 @@ details summary { cursor: pointer; font-size: 12px; color: var(--accent-2); marg
   font-size: 13px; font-weight: 600; z-index: 1000; display: none; box-shadow: 0 4px 16px rgba(0,0,0,.4);
 }
 
+/* ---------- Slide deck prompt modal ---------- */
+#promptModal { position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center; }
+#promptBackdrop { position: absolute; inset: 0; background: rgba(0,0,0,.65); backdrop-filter: blur(2px); }
+#promptDialog {
+  position: relative; z-index: 1; width: min(820px, 94vw); max-height: 88vh;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  display: flex; flex-direction: column; box-shadow: 0 24px 64px rgba(0,0,0,.6);
+}
+#promptHeader {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 16px; border-bottom: 1px solid var(--line); flex-shrink: 0;
+}
+#promptTitle { font-size: 14px; font-weight: 700; color: var(--text); }
+#promptText {
+  flex: 1; min-height: 0; resize: none; width: 100%;
+  background: var(--panel-2); color: var(--text); border: none;
+  padding: 16px; font-size: 12px; line-height: 1.55; font-family: monospace;
+  border-radius: 0 0 12px 12px; outline: none;
+}
+
 /* Scrollbar */
 #sidebar::-webkit-scrollbar { width: 4px; }
 #sidebar::-webkit-scrollbar-track { background: transparent; }
