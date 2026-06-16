@@ -1072,176 +1072,194 @@ CAD/GIS shadow modeling with certified consultant review.
 /* ============================================================ slide prompt ==*/
 
 function generateSlidePrompt() {
-  const out = analyzeDay(state.currentDayId);
-  const { results } = out;
+  ensureAllDays();
+
   const prop = state.scenarios.proposed;
   const base = state.scenarios.baseline;
-  const dayLabel = CEQR_DAYS.find(d => d.id === state.currentDayId)?.label || state.currentDayId;
 
-  const sorted = RESOURCES
-    .map(r => ({ r, m: results[r.id] }))
-    .filter(x => x.m.incrMin > 0)
-    .sort((a, b) => b.m.incrMin - a.m.incrMin);
+  // Build totals + recurrence across all 4 days
+  const totals = {}, daysHitMap = {};
+  RESOURCES.forEach(r => {
+    totals[r.id]    = CEQR_DAYS.reduce((s, d) => s + (state.seasonalResults[d.id][r.id]?.incrMin || 0), 0);
+    daysHitMap[r.id] = CEQR_DAYS.filter(d => (state.seasonalResults[d.id][r.id]?.incrMin || 0) > 0).length;
+  });
 
-  const highConcern = sorted.filter(({ r, m }) =>
-    computeConcern(r, m, getSeasonalDays(r.id)) === 'High');
-  const midConcern  = sorted.filter(({ r, m }) =>
-    computeConcern(r, m, getSeasonalDays(r.id)) === 'Medium');
+  const worstDayMetric = r => CEQR_DAYS
+    .map(d => state.seasonalResults[d.id][r.id])
+    .reduce((best, m) => m.incrMin > best.incrMin ? m : best);
 
-  const mitigationCandidates = sorted.filter(x => x.r.mitigationCandidate);
+  const overallAffected = RESOURCES
+    .filter(r => totals[r.id] > 0)
+    .sort((a, b) => totals[b.id] - totals[a.id]);
 
-  // seasonal table rows
-  let seasonalRows = '';
-  if (state.seasonalResults) {
-    const totals = {};
-    RESOURCES.forEach(r => {
-      totals[r.id] = CEQR_DAYS.reduce((s, d) => s + ((state.seasonalResults[d.id]?.[r.id]?.incrMin) || 0), 0);
-    });
-    const affectedSeasonal = RESOURCES.filter(r => totals[r.id] > 0)
-      .sort((a, b) => totals[b.id] - totals[a.id]).slice(0, 12);
-    seasonalRows = affectedSeasonal.map(r => {
-      const cells = CEQR_DAYS.map(d => fmtDur((state.seasonalResults[d.id]?.[r.id]?.incrMin) || 0));
-      return `  - ${r.name}: Dec 21=${cells[3]}, Mar 21=${cells[0]}, May 6=${cells[1]}, Jun 21=${cells[2]}, Total=${fmtDur(totals[r.id])}`;
-    }).join('\n');
-  }
+  const overallConcern = r => computeConcern(r, worstDayMetric(r), daysHitMap[r.id]);
 
-  const resourceDetails = sorted.slice(0, 12).map(({ r, m }) => {
-    const seaDays = getSeasonalDays(r.id);
-    const concern = computeConcern(r, m, seaDays);
+  const highConcern = overallAffected.filter(r => overallConcern(r) === 'High');
+  const midConcern  = overallAffected.filter(r => overallConcern(r) === 'Medium');
+  const recurring   = overallAffected.filter(r => daysHitMap[r.id] >= 2);
+  const mitCands    = overallAffected.filter(r => r.mitigationCandidate);
+
+  // Per-resource full detail block
+  const resourceDetails = overallAffected.slice(0, 14).map(r => {
+    const wm = worstDayMetric(r);
+    const perDay = CEQR_DAYS.map(d => {
+      const m = state.seasonalResults[d.id][r.id];
+      return `${d.label.split('—')[0].trim()}: ${fmtDur(m.incrMin)}${m.incrMin > 0 ? ` (max ${m.maxIncrPct.toFixed(0)}%)` : ''}`;
+    }).join(' | ');
     return `  - ${r.name}
-      Incremental: ${fmtDur(m.incrMin)} | Existing: ${fmtDur(m.existingMin)} | Proposed: ${fmtDur(m.proposedMin)}
-      Max coverage: ${m.maxIncrPct.toFixed(0)}% | Avg coverage: ${m.avgIncrPct.toFixed(0)}% | Acre-minutes: ${m.acreMin.toFixed(1)}
-      Window: ${m.firstIncrT != null ? fmtClock(m.firstIncrT) + ' – ' + fmtClock(m.lastIncrT) : 'N/A'}
+      Total incremental (all days): ${fmtDur(totals[r.id])} across ${daysHitMap[r.id]} of 4 CEQR days
+      Worst day: ${fmtDur(wm.incrMin)} | Max coverage: ${wm.maxIncrPct.toFixed(0)}% | Avg: ${wm.avgIncrPct.toFixed(0)}% | Acre-min: ${wm.acreMin.toFixed(1)}
+      Per day: ${perDay}
       Impact theory: ${(r.impactTheory||[]).join(', ')}
-      Screening concern: ${concern} | Seasonal days affected: ${seaDays}
-      Mitigation candidate: ${r.mitigationCandidate ? 'Yes — ' + (r.mitigationMeasure || '') : 'No'}`;
+      Screening concern: ${overallConcern(r)} | Mitigation candidate: ${r.mitigationCandidate ? 'Yes' : 'No'}
+      ${r.mitigationCandidate ? 'Mitigation: ' + (r.mitigationMeasure || '') : ''}`;
   }).join('\n\n');
 
-  const prompt = `You are a professional urban planner and data visualization expert. I need you to create a complete slide deck for a Central Park shadow impact screening study. Use the analysis data below to write out every slide — title, subtitle, body text, data, and detailed instructions for the visual on each slide.
+  // Seasonal table block
+  const seasonalTable = overallAffected.slice(0, 14).map(r => {
+    const cells = [3,0,1,2].map(i => fmtDur(state.seasonalResults[CEQR_DAYS[i].id][r.id]?.incrMin || 0));
+    return `  - ${r.name}: Dec 21=${cells[0]}, Mar 21=${cells[1]}, May 6=${cells[2]}, Jun 21=${cells[3]}, Total=${fmtDur(totals[r.id])}, Days=${daysHitMap[r.id]}/4`;
+  }).join('\n');
+
+  // Per-day summaries
+  const perDaySummaries = CEQR_DAYS.map(day => {
+    const dr = state.seasonalResults[day.id];
+    const affected = RESOURCES.filter(r => dr[r.id].incrMin > 0)
+      .sort((a, b) => dr[b.id].incrMin - dr[a.id].incrMin).slice(0, 8);
+    if (!affected.length) return `  ${day.label}: No resources affected.`;
+    return `  ${day.label} (${affected.length} resources):\n` +
+      affected.map(r => `    • ${r.name}: ${fmtDur(dr[r.id].incrMin)}, max ${dr[r.id].maxIncrPct.toFixed(0)}% coverage`).join('\n');
+  }).join('\n\n');
+
+  // Slide numbering
+  let slide = 1;
+  const S = () => `SLIDE ${slide++}`;
+
+  const prompt = `You are a professional urban planner and data visualization expert. I need you to create a complete slide deck for a Central Park shadow impact screening study. Use the analysis data below to write out every slide — title, subtitle, body text, exact data figures, and detailed instructions for the visual on each slide.
 
 STUDY CONTEXT
 =============
 Project type: NYC CEQR Chapter 8 Shadows — screening-level incremental shadow analysis
 Baseline condition: ${base.heightFt > 0 ? base.heightFt + ' ft existing/as-of-right building' : 'No existing building (0 ft baseline)'}
 Proposed condition: ${prop.heightFt} ft proposed/discretionary building
-Primary analysis day shown: ${dayLabel}
+Analysis days: All four CEQR representative days (Mar 21, May 6/Aug 6, Jun 21, Dec 21)
 Time-step interval: ${STEP_MIN} minutes
 Analysis window: CEQR standard (sunrise +90 min to sunset −90 min)
 Resource polygons: OpenStreetMap (screening-level)
 Tree canopy: Excluded
 Disclaimer: Screening-level only — not a CEQR significance determination
 
-AFFECTED RESOURCES — ${dayLabel.toUpperCase()}
-${sorted.length > 0 ? resourceDetails : '  None affected on this day.'}
+OVERALL FINDINGS (all 4 CEQR days combined)
+============================================
+Total resources affected on at least one day: ${overallAffected.length}
+Recurring resources (2+ days): ${recurring.length > 0 ? recurring.map(r => r.name).join(', ') : 'None'}
+High-concern resources: ${highConcern.length > 0 ? highConcern.map(r => r.name).join(', ') : 'None'}
+Medium-concern resources: ${midConcern.length > 0 ? midConcern.map(r => r.name).join(', ') : 'None'}
+Mitigation candidates: ${mitCands.length > 0 ? mitCands.map(r => r.name).join(', ') : 'None'}
 
-${state.seasonalResults ? `SEASONAL SUMMARY (all 4 CEQR days)
-=====================================
-${seasonalRows || '  No seasonal data available.'}` : 'SEASONAL SUMMARY: Not yet computed (user has not run all CEQR days).'}
+PER-RESOURCE DETAIL (sorted by total incremental shadow)
+=========================================================
+${overallAffected.length > 0 ? resourceDetails : '  No resources affected.'}
 
-HIGH-CONCERN RESOURCES: ${highConcern.length > 0 ? highConcern.map(x => x.r.name).join(', ') : 'None identified'}
-MEDIUM-CONCERN RESOURCES: ${midConcern.length > 0 ? midConcern.map(x => x.r.name).join(', ') : 'None identified'}
-MITIGATION CANDIDATES: ${mitigationCandidates.length > 0 ? mitigationCandidates.map(x => x.r.name).join(', ') : 'None identified'}
+SEASONAL SUMMARY TABLE
+=======================
+${seasonalTable || '  No data.'}
+
+PER-DAY SUMMARIES
+==================
+${perDaySummaries}
 
 SLIDE DECK INSTRUCTIONS
 ========================
-Create a 10–14 slide deck in a dark, professional urban-planning aesthetic (dark navy/charcoal background, gold and white accents). The audience is a municipal review board or project team conducting environmental review.
+Create a 12–15 slide deck in a dark, professional urban-planning aesthetic (dark navy/charcoal background, gold and white accents). The audience is a municipal review board or project team conducting environmental review. Write out every slide in full — title, body text with exact figures from the data above, and a detailed visual specification.
 
-Build the following slides:
-
-SLIDE 1 — TITLE SLIDE
+${S()} — TITLE SLIDE
 Title: "Central Park Shadow Impact Screening"
-Subtitle: "Baseline vs. Proposed Incremental Shadow Analysis · NYC CEQR Chapter 8"
-Visual: A stylized aerial outline of Central Park with a building shadow sweeping across it. Show the park boundary in green and the shadow as a semi-transparent amber polygon.
+Subtitle: "Baseline vs. Proposed Incremental Shadow Analysis · All CEQR Representative Days · NYC CEQR Chapter 8"
+Visual: Stylized aerial outline of Central Park with a building shadow sweeping across it. Park boundary in green, shadow in semi-transparent amber.
 
-SLIDE 2 — STUDY METHODOLOGY
+${S()} — STUDY METHODOLOGY
 Title: "Approach & Assumptions"
-Content: bullet points covering CEQR methodology, the 4 representative days, the analysis window, two-scenario approach (baseline vs. proposed), and the screening-level disclaimer.
-Visual: A simple diagram showing the sun's arc, building extrusion, and shadow vector with labeled components (height, sun altitude angle, shadow length).
+Content: Bullet points — CEQR methodology, all 4 representative days, analysis window, two-scenario approach (baseline vs. proposed), ${STEP_MIN}-min time step, screening-level disclaimer.
+Visual: Diagram of sun arc over Manhattan skyline, building extrusion with labeled components (height, sun altitude angle α, shadow length = h/tan α), and shadow polygon on the park.
 
-SLIDE 3 — BUILDING SCENARIOS
+${S()} — BUILDING SCENARIOS
 Title: "Baseline vs. Proposed Conditions"
-Content: A two-column comparison table:
-  Left column — Existing/As-of-Right: ${base.heightFt} ft, footprint description
-  Right column — Proposed/Discretionary: ${prop.heightFt} ft, footprint description
-Visual: A side-by-side 3-D massing diagram showing the two buildings at scale next to a simplified Central Park outline.
+Content: Two-column comparison — Existing/As-of-Right: ${base.heightFt} ft | Proposed/Discretionary: ${prop.heightFt} ft. Note that incremental shadow = proposed minus existing.
+Visual: Side-by-side 3-D massing diagram at scale next to a simplified Central Park footprint outline. Label both buildings with heights.
 
-SLIDE 4 — SHADOW EXTENT MAP
-Title: "Incremental Shadow Extent — ${dayLabel}"
-Content: Caption explaining what incremental shadow means and which resources are affected.
-Visual: A map of Central Park showing:
-  - Park boundary in green
-  - Baseline shadow in blue-grey
-  - Proposed shadow in dark overlay
-  - Incremental shadow in amber/gold
-  - Affected resource polygons labeled and highlighted
-  - A north arrow, scale bar, and legend
+${S()} — SHADOW EXTENT MAP (WORST-CASE DAY)
+Title: "Incremental Shadow Extent — Peak Analysis Day"
+Content: Show the day with the most resources affected. Explain what incremental shadow means.
+Visual: Map of Central Park with park boundary in green, baseline shadow in blue-grey, proposed shadow in dark overlay, incremental shadow in amber/gold, affected resource polygons highlighted and labeled. North arrow, scale bar, legend.
 
-SLIDE 5 — RESOURCE IMPACT RANKING
-Title: "Incremental Shadow Duration by Resource — ${dayLabel}"
-Content: Brief framing sentence about the ranking.
-Visual: A horizontal bar chart ranking the top ${Math.min(sorted.length, 10)} affected resources by incremental shadow duration (minutes). Color bars by concern level: red for High, orange for Medium, green for Low. Label each bar with the duration and concern level badge.
+${S()} — OVERALL RESOURCE IMPACT RANKING
+Title: "Total Incremental Shadow by Resource — All CEQR Days"
+Content: Ranked by total incremental shadow across all four analysis days.
+Visual: Horizontal bar chart of the top ${Math.min(overallAffected.length, 12)} affected resources, bars colored by concern level (red=High, orange=Medium, green=Low). Each bar labeled with total duration and days-affected count (e.g. "2h 30m · 3/4 days").
 
-SLIDE 6 — COVERAGE METRICS
+${S()} — COVERAGE METRICS
 Title: "Area Coverage & Scale of Impact"
-Content: Explanation that duration alone doesn't capture significance — coverage % and acre-minutes show how much of each resource is affected.
-Visual: A scatter plot with incremental duration (x-axis) vs. max coverage % (y-axis). Each point represents one resource, sized by shadow-acre-minutes, colored by concern level, and labeled by resource name.
+Content: Duration alone doesn't capture significance — max coverage % and shadow-acre-minutes show how much of each resource is simultaneously affected.
+Visual: Scatter plot — x-axis: total incremental duration (min), y-axis: max coverage % on worst day. Points sized by shadow-acre-minutes, colored by concern level, labeled by resource name.
 
-${state.seasonalResults ? `SLIDE 7 — SEASONAL SUMMARY
+${S()} — SEASONAL PATTERN
 Title: "Seasonal Pattern of Incremental Shadow"
-Content: Which resources are affected across multiple CEQR analysis days — recurrence signals greater significance.
-Visual: A heat table (matrix) where rows are the top affected resources and columns are the 4 CEQR days. Color cells by incremental duration: white/light = minimal, gold = moderate, amber = significant. Include a total column on the right.
+Content: Which resources are affected on multiple CEQR days — recurrence is a key signal of greater significance. Recurring resources: ${recurring.length > 0 ? recurring.map(r => r.name).join(', ') : 'none identified'}.
+Visual: Heat matrix — rows are affected resources, columns are the 4 CEQR days (Dec 21, Mar 21, May 6, Jun 21), plus a Total column. Color cells white=none, light gold=short, amber=moderate, bright gold=significant. Include days-affected count.
 
-SLIDE 8 — RESOURCES OF CONCERN
-` : `SLIDE 7 — RESOURCES OF CONCERN
-`}Title: "Screening-Level Concern Assessment"
-Content: A table with columns: Resource | Impact Theory | Incremental Duration | Max Coverage | Concern Level. Highlight High and Medium rows.
-Visual: Styled table with concern-level badges. Add a footnote: "Concern levels are screening indicators, not CEQR significance determinations."
+${S()} — PER-DAY COMPARISON
+Title: "Impact by CEQR Analysis Day"
+Content: How the shadow pattern shifts across seasons — winter solstice produces the longest shadows, summer the shortest.
+Visual: Grouped bar chart — one group per CEQR day, bars within each group represent the top 5–6 affected resources. Allows direct seasonal comparison per resource.
 
-${highConcern.length > 0 ? `SLIDE ${state.seasonalResults ? 9 : 8} — HIGH-CONCERN RESOURCE SPOTLIGHT
+${S()} — SCREENING CONCERN ASSESSMENT
+Title: "Screening-Level Concern Ratings"
+Content: Concern levels based on duration, coverage, recurrence, public-use sensitivity, and impact theory. These are screening indicators, not CEQR significance determinations.
+Visual: Styled table — columns: Resource | Impact Theory | Total Duration | Max Coverage | Days Affected | Concern Level. Highlight High rows in red, Medium in orange.
+
+${highConcern.length > 0 ? `${S()} — HIGH-CONCERN RESOURCE SPOTLIGHT
 Title: "${highConcern[0].r.name} — Detailed Impact"
-Content: Full metrics for ${highConcern[0].r.name}: duration, coverage, window, impact theory, and why this resource warrants further review.
-Visual: A zoomed map of ${highConcern[0].r.name} showing the incremental shadow polygon overlaid on the resource polygon at the time of maximum coverage. Include a small inset timeline bar showing when incremental shadow occurs across the day.
+Content: Full metrics for ${highConcern[0].r.name} — duration by day, coverage, impact theory, and why this resource warrants further review. Impact theory: ${(highConcern[0].impactTheory||[]).join(', ')}.
+Visual: Zoomed map of ${highConcern[0].r.name} showing incremental shadow polygon overlaid on the resource polygon at the time of maximum coverage. Include inset timeline bar showing when incremental shadow occurs across the worst-case day.
 
-SLIDE ${state.seasonalResults ? 10 : 9} — MITIGATION IDEAS
-` : `SLIDE ${state.seasonalResults ? 9 : 8} — MITIGATION IDEAS
-`}Title: "Potential Mitigation Measures"
-Content: For each mitigation candidate, list the resource name, possible critique, suggested measure, implementation partner, and feasibility.
-Visual: A styled card layout, one card per resource. Each card has a small icon for the mitigation category (shelter, lighting, landscaping, etc.), the resource name in bold, and the measure in plain text.
+` : ''}${S()} — MITIGATION IDEAS
+Title: "Potential Mitigation Measures"
+Content: For each mitigation candidate (${mitCands.length > 0 ? mitCands.map(r => r.name).join(', ') : 'none identified'}), list the resource name, possible critique, suggested measure, implementation partner, cost range, and feasibility.
+Visual: Card layout — one card per resource with mitigation-category icon, resource name, measure in plain text, and a cost/feasibility badge.
 
-SLIDE ${state.seasonalResults ? (highConcern.length > 0 ? 11 : 10) : (highConcern.length > 0 ? 10 : 9)} — CONCLUSIONS
-Title: "Screening-Level Findings"
+${S()} — CONCLUSIONS
+Title: "Screening-Level Findings & Next Steps"
 Content:
-  - Summary of total resources affected
-  - Which resources rise to High/Medium concern and why
-  - Which resources show seasonal recurrence
-  - Recommended next steps (further consultant review for High-concern resources; no further action for Low-concern resources)
-  - Disclaimer that this is screening-level only
-Visual: A simple summary scorecard with three columns: Resource | Concern Level | Recommended Action. Use color coding.
+  - ${overallAffected.length} resources affected across all CEQR analysis days
+  - ${recurring.length} show recurrent shadow on 2+ days: ${recurring.map(r => r.name).join(', ') || 'none'}
+  - High concern: ${highConcern.map(r => r.name).join(', ') || 'none'} — recommend further consultant review
+  - Medium concern: ${midConcern.map(r => r.name).join(', ') || 'none'} — monitor
+  - Screening-level only; not a CEQR significance determination
+Visual: Summary scorecard — three columns: Resource | Concern Level | Recommended Action. Color-coded rows.
 
-SLIDE ${state.seasonalResults ? (highConcern.length > 0 ? 12 : 11) : (highConcern.length > 0 ? 11 : 10)} — APPENDIX / ASSUMPTIONS
+${S()} — APPENDIX / ASSUMPTIONS
 Title: "Assumptions & Data Sources"
-Content bullet points:
-  - Baseline: ${base.heightFt} ft
-  - Proposed: ${prop.heightFt} ft
+Content:
+  - Baseline: ${base.heightFt} ft | Proposed: ${prop.heightFt} ft
   - Analysis days: Mar 21, May 6/Aug 6, Jun 21, Dec 21
-  - Time-step interval: ${STEP_MIN} minutes
+  - Time-step: ${STEP_MIN} minutes | Window: CEQR standard
   - Resource polygons: OpenStreetMap (OSM/ODbL)
   - Shadow geometry: flat-topped extrusion, convex hull
   - Tree canopy: excluded
   - Analysis type: Screening-level; not consultant-certified
-  - Tool: Central Park Shadow Screening App (custom)
-Visual: Clean text slide, no chart needed.
+Visual: Clean text slide.
 
 FORMATTING NOTES
 =================
-- Use a dark navy or charcoal background (#0f1418 or similar) throughout.
-- Accent colors: gold/amber (#f4c430) for proposed/incremental shadow, steel blue (#4a7abf) for baseline/existing, white for text, muted grey (#9fb0bd) for secondary text.
-- Concern level badge colors: red for High, orange for Medium, green for Low.
-- All charts should have labeled axes, a legend, and a data source note.
-- Maps should include a north arrow, scale bar, and legend.
-- Keep slide body text to 3–5 bullet points maximum. Put detail in speaker notes.
-- Add speaker notes to each slide with additional context for the presenter.
-- The tone should be objective, technical, and appropriate for a municipal environmental review audience.`;
+- Dark navy/charcoal background (#0f1418) throughout.
+- Accent colors: amber/gold (#f4c430) for incremental shadow, steel blue (#4a7abf) for baseline, white for text, grey (#9fb0bd) for secondary.
+- Concern badges: red=High, orange=Medium, green=Low.
+- All charts: labeled axes, legend, data-source note.
+- All maps: north arrow, scale bar, legend.
+- Slide body: 3–5 bullets max; put detail in speaker notes.
+- Include speaker notes on every slide for the presenter.
+- Tone: objective, technical, appropriate for a municipal environmental review board.`;
 
   return prompt;
 }
