@@ -859,6 +859,216 @@ For a defensible EIS, use 3-D CAD/GIS shadow modeling with certified consultant 
   downloadText(memo, `cp-shadow-memo-${state.currentDayId}.txt`, 'text/plain');
 }
 
+/* ============================================================ all-days exports */
+
+function ensureAllDays() {
+  CEQR_DAYS.forEach(day => analyzeDay(day.id));
+  if (!state.seasonalResults) {
+    const sr = {};
+    CEQR_DAYS.forEach(day => { sr[day.id] = analyzeDay(day.id).results; });
+    state.seasonalResults = sr;
+  }
+}
+
+function exportCsvAllDays() {
+  ensureAllDays();
+  const prop = state.scenarios.proposed;
+  const base = state.scenarios.baseline;
+
+  // Header row
+  const header = [
+    'Resource ID', 'Resource Name', 'Type', 'Sun-Sensitive', 'Priority',
+    'Impact Theory', 'Mitigation Candidate', 'Concern Level (overall)'
+  ];
+  CEQR_DAYS.forEach(d => {
+    const lbl = d.id.toUpperCase();
+    header.push(
+      `${lbl} Existing (min)`, `${lbl} Proposed (min)`, `${lbl} Incremental (min)`,
+      `${lbl} Max Coverage %`, `${lbl} Avg Coverage %`, `${lbl} Acre-Minutes`
+    );
+  });
+  header.push('Total Incremental (min)', 'Total Incremental (formatted)', 'CEQR Days Affected');
+
+  const rows = [header];
+
+  RESOURCES.forEach(r => {
+    const dayMetrics = CEQR_DAYS.map(d => state.seasonalResults[d.id][r.id]);
+    const totalIncr  = dayMetrics.reduce((s, m) => s + m.incrMin, 0);
+    const daysHit    = dayMetrics.filter(m => m.incrMin > 0).length;
+    const worstDay   = dayMetrics.reduce((best, m) => m.incrMin > best.incrMin ? m : best, dayMetrics[0]);
+    const concern    = computeConcern(r, worstDay, daysHit);
+
+    const row = [
+      r.id, r.name, r.type,
+      r.sunSensitive ? 'Yes' : 'No',
+      r.interestResource ? 'Yes' : 'No',
+      (r.impactTheory || []).join('; '),
+      r.mitigationCandidate ? 'Yes' : 'No',
+      concern
+    ];
+    dayMetrics.forEach(m => {
+      row.push(m.existingMin, m.proposedMin, m.incrMin,
+               m.maxIncrPct.toFixed(1), m.avgIncrPct.toFixed(1), m.acreMin.toFixed(2));
+    });
+    row.push(totalIncr, fmtDur(totalIncr), daysHit);
+    rows.push(row);
+  });
+
+  // Assumptions footer
+  rows.push([]);
+  rows.push(['Assumptions']);
+  rows.push(['Baseline height (ft)', base.heightFt]);
+  rows.push(['Proposed height (ft)', prop.heightFt]);
+  rows.push(['Time-step (min)', STEP_MIN]);
+  rows.push(['CEQR days', CEQR_DAYS.map(d => d.label).join(' | ')]);
+  rows.push(['Resource polygons', 'OpenStreetMap (OSM/ODbL) — screening-level']);
+  rows.push(['Tree canopy', 'Excluded']);
+  rows.push(['Analysis type', 'Screening-level; not a CEQR significance determination']);
+
+  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g,'""')}"`).join(',')).join('\n');
+  downloadText(csv, 'cp-shadow-all-ceqr-days.csv', 'text/csv');
+}
+
+function exportMemoAllDays() {
+  ensureAllDays();
+  const prop = state.scenarios.proposed;
+  const base = state.scenarios.baseline;
+
+  const totals = {};
+  RESOURCES.forEach(r => {
+    totals[r.id] = CEQR_DAYS.reduce((s, d) => s + (state.seasonalResults[d.id][r.id]?.incrMin || 0), 0);
+  });
+
+  const overallAffected = RESOURCES
+    .filter(r => totals[r.id] > 0)
+    .sort((a, b) => totals[b.id] - totals[a.id]);
+
+  const daysHitMap = {};
+  RESOURCES.forEach(r => {
+    daysHitMap[r.id] = CEQR_DAYS.filter(d => (state.seasonalResults[d.id][r.id]?.incrMin || 0) > 0).length;
+  });
+
+  const worstDayMetric = r => CEQR_DAYS
+    .map(d => state.seasonalResults[d.id][r.id])
+    .reduce((best, m) => m.incrMin > best.incrMin ? m : best);
+
+  const overallConcern = r => computeConcern(r, worstDayMetric(r), daysHitMap[r.id]);
+
+  const highC = overallAffected.filter(r => overallConcern(r) === 'High');
+  const midC  = overallAffected.filter(r => overallConcern(r) === 'Medium');
+  const recurring = overallAffected.filter(r => daysHitMap[r.id] >= 2);
+
+  const line = '─'.repeat(56);
+
+  let memo = `CENTRAL PARK SHADOW ANALYSIS — FULL SEASONAL SCREENING MEMO
+${'='.repeat(60)}
+Analysis Date: ${new Date().toLocaleDateString()}
+CEQR Analysis Days: Mar 21, May 6/Aug 6, Jun 21, Dec 21 (all four)
+Time-Step Interval: ${STEP_MIN} minutes
+Baseline Building: ${base.heightFt > 0 ? base.heightFt + ' ft (existing/as-of-right)' : 'No existing building (height = 0 ft)'}
+Proposed Building: ${prop.heightFt} ft (proposed/discretionary)
+Resource Polygon Source: OpenStreetMap (OSM/ODbL) — screening-level
+Tree Canopy: Excluded
+Analysis Type: Screening-level; not a CEQR significance determination
+
+OVERALL SUMMARY
+${line}
+Across all four CEQR analysis days, incremental shadow from the proposed
+building reaches ${overallAffected.length} park resource${overallAffected.length === 1 ? '' : 's'} on at least one analysis day.
+
+`;
+
+  if (recurring.length) {
+    memo += `${recurring.length} resource${recurring.length === 1 ? '' : 's'} receive incremental shadow on two or more analysis days,
+indicating a recurrent seasonal pattern:
+${recurring.map(r => `  • ${r.name} (${daysHitMap[r.id]} of 4 days, total ${fmtDur(totals[r.id])})`).join('\n')}
+
+`;
+  }
+
+  if (highC.length) {
+    memo += `Resources rising to HIGH screening concern:
+${highC.map(r => `  • ${r.name}`).join('\n')}
+
+`;
+  }
+  if (midC.length) {
+    memo += `Resources at MEDIUM screening concern:
+${midC.map(r => `  • ${r.name}`).join('\n')}
+
+`;
+  }
+
+  // Per-day sections
+  CEQR_DAYS.forEach(day => {
+    const dayResults = state.seasonalResults[day.id];
+    const affected = RESOURCES
+      .filter(r => dayResults[r.id].incrMin > 0)
+      .sort((a, b) => dayResults[b.id].incrMin - dayResults[a.id].incrMin);
+
+    memo += `\n${day.label.toUpperCase()}
+${'='.repeat(50)}
+`;
+    if (!affected.length) {
+      memo += `No resources receive incremental shadow on this day.\n`;
+      return;
+    }
+    memo += `${affected.length} resource${affected.length === 1 ? '' : 's'} affected.\n\n`;
+
+    affected.forEach(r => {
+      const m = dayResults[r.id];
+      const concern = computeConcern(r, m, daysHitMap[r.id]);
+      memo += `${r.name}  [${concern} concern]
+  Existing:    ${fmtDur(m.existingMin)}
+  Proposed:    ${fmtDur(m.proposedMin)}
+  Incremental: ${fmtDur(m.incrMin)}${m.firstIncrT != null ? '  (' + fmtClock(m.firstIncrT) + ' – ' + fmtClock(m.lastIncrT) + ')' : ''}
+  Max coverage: ${m.maxIncrPct.toFixed(0)}%  |  Avg: ${m.avgIncrPct.toFixed(0)}%  |  Acre-min: ${m.acreMin.toFixed(1)}
+  Impact theory: ${(r.impactTheory || []).join(', ')}
+`;
+    });
+  });
+
+  // Seasonal summary table
+  memo += `\nSEASONAL SUMMARY TABLE
+${'='.repeat(50)}
+${'Resource'.padEnd(28)} ${'Dec 21'.padStart(7)} ${'Mar 21'.padStart(7)} ${'May 6'.padStart(7)} ${'Jun 21'.padStart(7)} ${'Total'.padStart(8)} Days
+${line}
+`;
+  overallAffected.forEach(r => {
+    const cells = [3,0,1,2].map(i => {
+      const min = (state.seasonalResults[CEQR_DAYS[i].id][r.id]?.incrMin || 0);
+      return (min > 0 ? fmtDur(min) : '—').padStart(7);
+    });
+    memo += `${r.name.substring(0, 27).padEnd(28)} ${cells.join(' ')} ${fmtDur(totals[r.id]).padStart(8)} ${daysHitMap[r.id]}/4\n`;
+  });
+
+  memo += `\nCONCLUSIONS
+${line}
+Based on this screening-level analysis across all four CEQR representative days:
+
+`;
+  if (highC.length) {
+    memo += `${highC.map(r => r.name).join(', ')} ${highC.length === 1 ? 'appears' : 'appear'} to warrant further consultant review given the duration, seasonal recurrence, and sensitivity of the resource${highC.length === 1 ? '' : 's'}.
+
+`;
+  }
+  const lowC = overallAffected.filter(r => overallConcern(r) === 'Low');
+  if (lowC.length) {
+    memo += `${lowC.map(r => r.name).join(', ')} ${lowC.length === 1 ? 'does' : 'do'} not appear to show concentrated or recurrent incremental shadow effects based on this screening and ${lowC.length === 1 ? 'does' : 'do'} not appear to warrant further review at this time.
+
+`;
+  }
+
+  memo += `DISCLAIMER
+${line}
+This is a screening-level analysis, not a CEQR significance determination. Results
+are approximate and intended for initial study only. For a defensible EIS, use 3-D
+CAD/GIS shadow modeling with certified consultant review.
+`;
+
+  downloadText(memo, 'cp-shadow-memo-all-ceqr-days.txt', 'text/plain');
+}
+
 /* ============================================================ slide prompt ==*/
 
 function generateSlidePrompt() {
@@ -1261,6 +1471,8 @@ function initUI() {
   /* Export */
   document.getElementById('exportCsvBtn').addEventListener('click', exportCsv);
   document.getElementById('exportMemoBtn').addEventListener('click', exportMemo);
+  document.getElementById('exportCsvAllBtn').addEventListener('click', exportCsvAllDays);
+  document.getElementById('exportMemoAllBtn').addEventListener('click', exportMemoAllDays);
   document.getElementById('exportPromptBtn').addEventListener('click', showPromptModal);
 
   /* Prompt modal */
